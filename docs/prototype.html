@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>dsh-thalamus 通知中心原型</title>
+<style>
+  :root {
+    --bg: #1a1b1e; --panel: #252628; --panel2: #2e2f33;
+    --border: rgba(127,127,127,0.22); --text: #e8e8e8; --text2: #aaa; --text3: #888;
+    --accent: #4da3ff; --green: #4caf7d; --red: #e5484d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0e10; color: var(--text); font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 14px; }
+  .topbar { padding: 10px 20px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 50; }
+  .topbar h1 { font-size: 15px; font-weight: 600; }
+  .topbar .hint { color: var(--text3); font-size: 12px; }
+  .switch-group { display: flex; gap: 6px; margin-left: auto; }
+  .switch-group button { border: 1px solid var(--border); background: transparent; color: var(--text2); padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+  .switch-group button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* ── frame ── */
+  .frame { display: flex; height: calc(100vh - 52px); position: relative; }
+  /* sidebar */
+  .sidebar { width: 210px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+  .side-item { padding: 8px 14px; color: var(--text2); cursor: pointer; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+  .side-item:hover { background: rgba(127,127,127,0.08); }
+  .side-item.on { background: rgba(77,163,255,0.12); color: var(--accent); }
+  .side-spacer { flex: 1; }
+  .side-footer { border-top: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .foot-btn { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer; color: var(--text2); font-size: 13px; position: relative; }
+  .foot-btn:hover { background: rgba(127,127,127,0.1); color: var(--text); }
+  .foot-btn .ic { font-size: 16px; width: 22px; text-align: center; }
+  .foot-btn .badge { position: absolute; left: 26px; top: 1px; background: var(--red); color: #fff; font-size: 10px; min-width: 15px; height: 15px; line-height: 15px; border-radius: 8px; text-align: center; padding: 0 4px; font-weight: 700; }
+  /* main column */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--panel); }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 8px; background: var(--panel); }
+  .tab { padding: 9px 18px; color: var(--text2); cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .chat { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text3); gap: 8px; }
+  .bubble { background: var(--panel2); border-radius: 10px; padding: 10px 14px; max-width: 420px; }
+  /* details column (B) */
+  .details { width: 0; overflow: hidden; background: var(--panel2); border-left: 1px solid var(--border); transition: width .2s ease; flex-shrink: 0; }
+  .details.open { width: 300px; }
+  /* drawer (A) - overlay */
+  .drawer { position: absolute; left: 210px; top: 0; bottom: 0; width: 320px; background: var(--panel2); border-right: 1px solid var(--border); box-shadow: 8px 0 24px rgba(0,0,0,.35); display: none; z-index: 40; }
+  .drawer.open { display: flex; }
+  .drawer-inner { display: flex; flex-direction: column; width: 100%; }
+  /* shared panel parts */
+  .panel-head { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .panel-head b { font-size: 14px; }
+  .panel-head .acts { margin-left: auto; display: flex; gap: 6px; }
+  .mini-btn { border: 1px solid var(--border); background: transparent; color: var(--text2); padding: 3px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .mini-btn:hover { color: var(--text); }
+  .mini-btn.danger:hover { color: var(--red); border-color: var(--red); }
+  .panel-body { flex: 1; overflow-y: auto; }
+  .nitem { padding: 11px 14px; border-bottom: 1px solid rgba(127,127,127,.1); display: flex; gap: 10px; cursor: pointer; }
+  .nitem:hover { background: rgba(127,127,127,.07); }
+  .nitem .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex-shrink: 0; }
+  .nitem.read .dot { background: transparent; }
+  .nitem.read { opacity: .55; }
+  .nitem .body { flex: 1; min-width: 0; }
+  .nitem .title { font-weight: 600; font-size: 13px; }
+  .nitem .detail { color: var(--text2); font-size: 12px; margin-top: 2px; }
+  .nitem .meta { color: var(--text3); font-size: 11px; margin-top: 5px; display: flex; gap: 8px; align-items: center; }
+  .nitem .meta .src { background: rgba(127,127,127,.14); padding: 0 6px; border-radius: 4px; }
+  .nitem .meta .full { color: var(--accent); margin-left: auto; }
+  .nitem .bar { width: 3px; border-radius: 2px; flex-shrink: 0; }
+  .bar.success { background: var(--green); } .bar.info { background: var(--accent); } .bar.error { background: var(--red); }
+  .preview { padding: 14px; font-size: 12.5px; line-height: 1.7; color: var(--text2); white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; }
+  .preview h { display: block; font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .preview .li { display: block; padding-left: 10px; }
+  .tag { padding: 1px 8px; border-radius: 4px; font-size: 11px; }
+  .tag.rule { background: rgba(77,163,255,.15); color: var(--accent); }
+  .tag.llm { background: rgba(156,116,255,.15); color: #b58cff; }
+  .tag.manual { background: rgba(76,175,125,.15); color: var(--green); }
+  .pin-hint { padding: 6px 12px; font-size: 11px; color: var(--text3); border-bottom: 1px dashed var(--border); display: flex; gap: 6px; align-items: center; }
+  .pin-hint .mini-btn { padding: 1px 8px; }
+  /* mock compose */
+  .compose { border-top: 1px solid var(--border); padding: 10px 14px; display: flex; gap: 8px; }
+  .compose input { flex: 1; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 12px; outline: none; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>dsh-thalamus · 通知中心形态原型</h1>
+  <span class="hint">点击「整理记忆」模拟一次清理 → 观察三种形态的呈现</span>
+  <div class="switch-group">
+    <button data-mode="A" class="on">A · sidebar 铃铛+浮层</button>
+    <button data-mode="B">B · 右侧固定栏</button>
+    <button data-mode="C">C · 对话顶部 Tab</button>
+  </div>
+</div>
+
+<div class="frame">
+  <!-- sidebar -->
+  <div class="sidebar">
+    <div class="side-item on">💬 会话 A（当前）</div>
+    <div class="side-item">💬 会话 B</div>
+    <div class="side-spacer"></div>
+    <div class="side-footer">
+      <div class="foot-btn" id="bellBtn">⚙ 设置</div>
+      <div class="foot-btn" id="bellBtn2"><span class="ic">🔔</span>通知 <span class="badge" id="bellBadge" style="display:none">2</span></div>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab" id="tab-lineage">Lineage</div>
+      <div class="tab" id="tab-memory">记忆</div>
+      <div class="tab" id="tab-notify" style="display:none">通知</div>
+    </div>
+    <div class="chat" id="chatArea">
+      <div class="bubble">▸ 用户：帮我整理一下记忆吧</div>
+      <div class="bubble">▸ 助手：好的，正在后台整理…</div>
+      <button class="mini-btn" id="btnMaintain" style="margin-top:10px">▶ 整理记忆（模拟推送）</button>
+    </div>
+    <div class="compose"><input placeholder="发送消息…" disabled></div>
+  </div>
+
+  <!-- C: 通知 tab 内容 -->
+  <div id="tabContent" style="display:none; flex:1; min-width:0; flex-direction:column; background:var(--panel); border-left:1px solid var(--border)">
+  </div>
+
+  <!-- A: drawer -->
+  <div class="drawer" id="drawerA"></div>
+
+  <!-- B: details -->
+  <div class="details" id="detailsB">
+    <div class="panel-head"><b>通知中心</b>
+      <div class="acts"><button class="mini-btn" id="pinB">📌 固定</button><button class="mini-btn" id="closeB">✕</button></div>
+    </div>
+    <div class="panel-body" id="bodyB"></div>
+  </div>
+</div>
+
+<script>
+const NOTES = [
+  { id: 1, read: 0, bar: 'success', title: '记忆整理完成', detail: '清理 3 条记录', time: '2 分钟前', src: 'hippocampus', tag: 'manual',
+    preview: '本次清理记录\n\n  ▸ 删除 [项目] 测试恢复A：团队约定代码评审用中文评论\n  ▸ 删除 [项目] 测试恢复B：dsh-hippocampus 的恢复机制基于审计日志\n  ▸ 删除 [全局] 过期的构建提示（7 天未召回）' },
+  { id: 2, read: 0, bar: 'success', title: '记忆整理完成', detail: '清理 1 条记录', time: '1 小时前', src: 'hippocampus', tag: 'rules',
+    preview: '本次清理记录\n\n  ▸ 删除 [项目] 过期的调试日志记忆（30 天未召回）' },
+  { id: 3, read: 1, bar: 'info', title: 'git 提交成功', detail: 'feat: 通知中心原型', time: '3 小时前', src: 'git', tag: null,
+    preview: '提交详情\n\n  分支 master\n  文件 4 个变更\n  +120 -18' },
+];
+let mode = 'A';
+let expanded = null; // 预览中的通知 id（在 C 中）
+
+function renderList(el, showPreview) {
+  el.innerHTML = NOTES.map(n => `
+    <div class="nitem ${n.read ? 'read' : ''}" data-id="${n.id}">
+      <span class="dot"></span>
+      <span class="bar ${n.bar}"></span>
+      <div class="body">
+        <div class="title">${n.title}</div>
+        <div class="detail">${n.detail}</div>
+        <div class="meta"><span class="src">${n.src}</span><span>${n.time}</span>
+          ${n.tag ? `<span class="tag ${n.tag}">${n.tag}</span>` : ''}
+          <span class="full">查看全文 →</span></div>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.nitem').forEach(row => {
+    row.onclick = () => {
+      const id = +row.dataset.id;
+      const n = NOTES.find(x => x.id === id);
+      n.read = 1;
+      if (mode === 'C' && showPreview) { showPreviewContent(n); return; }
+      renderList(el, showPreview);
+      if (mode === 'A') renderDrawerA();
+      if (mode === 'B') renderB();
+      syncBadge();
+    };
+  });
+}
+
+function renderDrawerA() {
+  const d = document.getElementById('drawerA');
+  d.innerHTML = `<div class="drawer-inner">
+    <div class="panel-head"><b>通知中心</b><div class="acts">
+      <button class="mini-btn" id="markA">全部已读</button>
+      <button class="mini-btn" id="clearA">清空</button>
+      <button class="mini-btn" id="closeA">✕</button></div></div>
+    <div class="panel-body" id="bodyA"></div>
+  </div>`;
+  renderList(document.getElementById('bodyA'));
+  document.getElementById('markA').onclick = () => { NOTES.forEach(n => n.read = 1); renderDrawerA(); syncBadge(); };
+  document.getElementById('clearA').onclick = () => { NOTES.length = 0; renderDrawerA(); syncBadge(); };
+  document.getElementById('closeA').onclick = () => { d.classList.remove('open'); };
+}
+
+function renderB() {
+  renderList(document.getElementById('bodyB'));
+}
+
+function showPreviewContent(n) {
+  // C 模式：tab 内容区显示预览
+  const tabC = document.getElementById('tabContent');
+  tabC.innerHTML = `<div class="panel-head"><b>← 返回</b><div class="acts"><b style="font-size:13px;color:var(--text3)">${n.title}</b></div></div>
+    <div class="preview">${n.preview.replace(/^(.+)$/gm, m => m.startsWith('▸') || m.startsWith('  ') ? `<span class="li">${m}</span>` : m)}</div>`;
+}
+
+function syncBadge() {
+  const unread = NOTES.filter(n => !n.read).length;
+  const b = document.getElementById('bellBadge');
+  b.style.display = unread > 0 ? '' : 'none';
+  b.textContent = unread;
+}
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.switch-group button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  const drawer = document.getElementById('drawerA');
+  const details = document.getElementById('detailsB');
+  const tabN = document.getElementById('tab-notify');
+  const tabC = document.getElementById('tabContent');
+  const chat = document.getElementById('chatArea');
+  drawer.classList.remove('open');
+  details.classList.remove('open');
+  tabN.style.display = m === 'C' ? '' : 'none';
+  // C 模式把 tab 内容区插入
+  if (m === 'C') {
+    chat.style.display = 'none';
+    tabC.style.display = 'flex';
+    tabC.innerHTML = `<div class="panel-head"><b>通知中心</b><div class="acts">
+      <button class="mini-btn">全部已读</button><button class="mini-btn danger">清空</button></div></div>
+      <div class="panel-body" id="bodyC"></div>`;
+    renderList(document.getElementById('bodyC'), true);
+    document.getElementById('tabContent').querySelector('.acts .mini-btn:first-child').onclick = () => {
+      NOTES.forEach(n => n.read = 1); setMode('C'); syncBadge();
+    };
+  } else {
+    chat.style.display = '';
+    tabC.style.display = 'none';
+  }
+}
+
+// 事件
+document.querySelectorAll('.switch-group button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+document.getElementById('bellBtn2').onclick = () => {
+  if (mode === 'A') document.getElementById('drawerA').classList.toggle('open');
+  if (mode === 'B') document.getElementById('detailsB').classList.toggle('open');
+  if (mode === 'C') { document.getElementById('tab-notify').click(); }
+  if (!document.getElementById('drawerA').querySelector('.panel-body')) renderDrawerA();
+};
+document.getElementById('closeB').onclick = () => document.getElementById('detailsB').classList.remove('open');
+document.getElementById('btnMaintain').onclick = () => {
+  NOTES.unshift({ id: Date.now(), read: 0, bar: 'success', title: '记忆整理完成', detail: '清理 2 条记录', time: '刚刚', src: 'hippocampus', tag: 'llm',
+    preview: '本次清理记录\n\n  ▸ 删除 [项目] 重复的编码规范记忆\n  ▸ 删除 [全局] 瞬时状态：构建输出提示' });
+  syncBadge();
+  if (mode === 'A') { renderDrawerA(); document.getElementById('drawerA').classList.add('open'); }
+  if (mode === 'B') { renderB(); document.getElementById('detailsB').classList.add('open'); }
+  if (mode === 'C') setMode('C');
+};
+// 初始
+syncBadge();
+</script>
+</body>
+</html>

@@ -1,10 +1,14 @@
 /**
- * ThalamusDrawer: the notification center + file preview surface.
+ * ThalamusPanel: the right-hand notification column (方案 B).
  *
- * Registered into ui-layout's shell.overlay slot: a bottom-right capsule
- * (with unread badge) that opens a two-tab drawer — Notifications (list,
- * unread dots, clear) and Preview (full text of a notification's attached
- * artifact, markdown/plain).
+ * Hidden by default; the sidebar bell (sidebar.footer.action) toggles it via
+ * the shared panel-state module. Fixed on the right edge, it overlays the
+ * app rather than squeezing the conversation column (the harness details
+ * slot is single-occupied by ui-chat, so a true layout column is not
+ * available to plugins; a fixed overlay column keeps the same feel).
+ *
+ * Two tabs: Notifications (list, unread dots, clear) and Preview (full text
+ * of a notification's attached artifact).
  */
 
 import { h, useCallback, useEffect, useMemo, useState } from './react.ts'
@@ -12,18 +16,14 @@ import {
   clearNotifications, fetchNotifications, markNotificationRead,
   startNotificationEvents, type ThalamusNotificationView,
 } from './api.ts'
+import { getUnread, isPanelOpen, setPanelOpen, setUnread, subscribePanel } from './panel-state.ts'
 import css from './thalamus.module.css'
 
-// Minimal DOM faces (the host tsconfig has no DOM lib; the browser bundle
-// provides the real globals).
+// Minimal DOM face (the host tsconfig has no DOM lib; the browser bundle
+// provides the real global).
 declare const window: { confirm(message: string): boolean }
 
-/** Props injected by the shell.overlay slot (empty for this host). */
-export interface ThalamusDrawerProps {
-  [key: string]: unknown
-}
-
-/** Injected services the drawer needs. */
+/** Injected services the panel needs. */
 export interface ThalamusInjected {
   t: (key: string, params?: Record<string, unknown>) => string
 }
@@ -78,61 +78,57 @@ function NotificationRow({
   )
 }
 
-/** Plain/markdown-ish preview body. */
+/** Plain/preformatted preview body. */
 function PreviewBody({ text }: { text: string }): ReturnType<typeof h> {
-  // First pass: plain preformatted text (markdown rendering is a follow-up).
   return h('pre', { className: css.previewBody }, text)
 }
 
-/** The drawer shell. */
-export function ThalamusDrawer({ injected }: { injected: ThalamusInjected }): ReturnType<typeof h> {
+/** The right-hand panel content. */
+function PanelContent({ injected }: { injected: ThalamusInjected }): ReturnType<typeof h> {
   const { t } = injected
-  const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'notifications' | 'preview'>('notifications')
   const [notifications, setNotifications] = useState<ThalamusNotificationView[]>([])
   const [preview, setPreview] = useState<ThalamusNotificationView | null>(null)
   const [loaded, setLoaded] = useState(false)
 
+  // Sync unread into the shared store for the bell badge.
   const unreadCount = useMemo(
     () => notifications.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
     [notifications],
   )
+  useEffect(() => { setUnread(unreadCount) }, [unreadCount])
 
   const load = useCallback(async (): Promise<void> => {
     try {
       const result = await fetchNotifications(100)
       setNotifications(result.notifications)
     } catch {
-      // The host may be down; keep the current list.
+      // Host may be down; keep the current list.
     }
   }, [])
 
-  // SSE: a pushed notification lands at the top of the list and highlights
-  // the capsule when the drawer is closed.
+  // SSE: a pushed notification lands at the top.
   useEffect(() => {
     const unsubscribe = startNotificationEvents(notification => {
       setNotifications(previous => [
         notification,
         ...previous.filter(item => item.id !== notification.id),
       ])
-      if (!open) setLoaded(true)
     })
     return unsubscribe
-  }, [open])
+  }, [])
 
-  // Load once when opened; mark all visible as read on close is handled by
-  // per-row read (auto-read on open is friendlier: opening the center means
-  // the user saw the headlines).
+  // Load once when the panel content mounts.
   useEffect(() => {
-    if (open && !loaded) {
+    if (!loaded) {
       setLoaded(true)
       void load()
     }
-  }, [open, loaded, load])
+  }, [loaded, load])
 
-  // Mark unread read shortly after the drawer opens.
+  // Auto-mark visible notifications read shortly after load (once).
   useEffect(() => {
-    if (!open) return
+    if (!loaded) return
     const ids = notifications.filter(item => !item.read).map(item => item.id)
     if (ids.length === 0) return
     const timer = setTimeout(() => {
@@ -140,10 +136,10 @@ export function ThalamusDrawer({ injected }: { injected: ThalamusInjected }): Re
         void markNotificationRead(id)
         setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
       }
-    }, 800)
+    }, 1200)
     return () => { clearTimeout(timer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [loaded])
 
   const openPreview = (notification: ThalamusNotificationView): void => {
     setPreview(notification)
@@ -158,80 +154,79 @@ export function ThalamusDrawer({ injected }: { injected: ThalamusInjected }): Re
     void clearNotifications().then(() => { setNotifications([]) })
   }
 
-  return h('div', { className: css.root },
-    // Trigger capsule.
-    h('button', {
-      type: 'button',
-      className: `${css.capsule}${unreadCount > 0 ? ` ${css.capsuleUnread}` : ''}`,
-      onClick: () => { setOpen(value => !value) },
-      'aria-label': t('thalamus.capsule'),
-    },
-      h('span', { className: css.capsuleLabel }, t('thalamus.capsule')),
-      unreadCount > 0 && h('span', { className: css.capsuleBadge }, String(unreadCount)),
-    ),
-    // Drawer.
-    open && h('div', { className: css.drawer },
-      h('div', { className: css.drawerHeader },
-        preview !== null
-          ? h('div', { className: css.drawerTabs },
-            h('button', {
-              type: 'button',
-              className: tab === 'notifications' ? `${css.tab} ${css.tabActive}` : css.tab,
-              onClick: backToNotifications,
-            }, t('thalamus.tab.notifications')),
-            h('button', {
-              type: 'button',
-              className: tab === 'preview' ? `${css.tab} ${css.tabActive}` : css.tab,
-              onClick: () => { setTab('preview') },
-            }, t('thalamus.tab.preview')),
-          )
-          : h('div', { className: css.drawerTabs },
-            h('button', {
-              type: 'button',
-              className: `${css.tab} ${css.tabActive}`,
-              onClick: () => { setTab('notifications') },
-            }, t('thalamus.tab.notifications')),
-          ),
-        h('div', { className: css.headerActions },
-          tab === 'notifications' && notifications.length > 0
-            && h('button', { type: 'button', className: css.headerAction, onClick: handleClear }, t('thalamus.clear')),
+  return h('div', { className: css.panel },
+    h('div', { className: css.panelHeader },
+      preview !== null
+        ? h('div', { className: css.panelTabs },
           h('button', {
             type: 'button',
-            className: css.headerClose,
-            onClick: () => { setOpen(false) },
-            'aria-label': 'Close',
-          }, '×'),
-        ),
+            className: tab === 'notifications' ? `${css.panelTab} ${css.panelTabActive}` : css.panelTab,
+            onClick: backToNotifications,
+          }, t('thalamus.tab.notifications')),
+          h('button', {
+            type: 'button',
+            className: tab === 'preview' ? `${css.panelTab} ${css.panelTabActive}` : css.panelTab,
+            onClick: () => { setTab('preview') },
+          }, t('thalamus.tab.preview')),
+        )
+        : h('div', { className: css.panelTitle }, t('thalamus.drawerTitle')),
+      h('div', { className: css.panelHeaderActions },
+        tab === 'notifications' && notifications.length > 0
+          && h('button', { type: 'button', className: css.panelAction, onClick: handleClear }, t('thalamus.clear')),
+        h('button', {
+          type: 'button',
+          className: css.panelClose,
+          onClick: () => { setPanelOpen(false) },
+          'aria-label': t('thalamus.close'),
+        }, '×'),
       ),
-      h('div', { className: css.drawerBody },
-        tab === 'notifications' && (
-          notifications.length === 0
-            ? h('div', { className: css.empty }, t('thalamus.empty'))
-            : h('div', { className: css.notificationList },
-              ...notifications.map(notification => h(NotificationRow, {
-                key: notification.id,
-                notification,
-                t,
-                onOpenPreview: openPreview,
-                onRead: (id: string) => {
-                  void markNotificationRead(id)
-                  setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
-                },
-              })),
-            )
-        ),
-        tab === 'preview' && preview !== null
-          ? h('div', { className: css.previewPane },
-            h('div', { className: css.previewName }, preview.preview?.name ?? preview.title),
-            h(PreviewBody, { text: preview.preview?.text ?? '' }),
+    ),
+    h('div', { className: css.panelBody },
+      tab === 'notifications' && (
+        notifications.length === 0
+          ? h('div', { className: css.empty }, t('thalamus.empty'))
+          : h('div', { className: css.notificationList },
+            ...notifications.map(notification => h(NotificationRow, {
+              key: notification.id,
+              notification,
+              t,
+              onOpenPreview: openPreview,
+              onRead: (id: string) => {
+                void markNotificationRead(id)
+                setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
+              },
+            })),
           )
-          : undefined,
       ),
+      tab === 'preview' && preview !== null
+        ? h('div', { className: css.previewPane },
+          h('div', { className: css.previewName }, preview.preview?.name ?? preview.title),
+          h(PreviewBody, { text: preview.preview?.text ?? '' }),
+        )
+        : undefined,
     ),
   )
 }
 
-/** The overlay entry component (props may carry nothing; injected has t). */
-export function ThalamusHost({ injected }: { injected: ThalamusInjected }): ReturnType<typeof h> {
-  return h(ThalamusDrawer, { injected })
+/** The shell.overlay host: renders the panel only when open. */
+export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): ReturnType<typeof h> | null {
+  const [open, setOpen] = useState(isPanelOpen)
+
+  useEffect(() => {
+    return subscribePanel(() => { setOpen(isPanelOpen()) })
+  }, [])
+
+  if (!open) return null
+  return h('div', { className: css.panelOverlay },
+    h(PanelContent, { injected }),
+  )
+}
+
+/** Read the shared unread for the bell (driven by the panel store). */
+export function useBellUnread(): number {
+  const [unread, setUnreadState] = useState(getUnread)
+  useEffect(() => {
+    return subscribePanel(() => { setUnreadState(getUnread()) })
+  }, [])
+  return unread
 }

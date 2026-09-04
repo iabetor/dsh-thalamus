@@ -1,12 +1,18 @@
 /**
- * dsh-thalamus client half: register the notification center + preview
- * drawer into ui-layout's shell.overlay slot.
+ * dsh-thalamus client half: register the notification center.
+ *
+ * - Sidebar footer action (`sidebar.footer.action`): the bell entry with an
+ *   unread badge that toggles the panel.
+ * - shell.overlay host: renders the right-hand notification panel only when
+ *   open (方案 B — fixed right column feel without touching the layout).
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { h } from './react.ts'
+import { h, useState, useEffect } from './react.ts'
 import { en, NS, zh } from './locales.ts'
-import { ThalamusHost } from './Drawer.ts'
+import { BellButton, type BellInjected } from './Bell.ts'
+import { ThalamusPanel, useBellUnread, type ThalamusInjected } from './Drawer.ts'
+import { isPanelOpen, setPanelOpen, subscribePanel } from './panel-state.ts'
 
 /** Structural face of the client services this plugin consumes. */
 export interface ThalamusClientContext extends Context {
@@ -23,19 +29,54 @@ export interface ThalamusClientContext extends Context {
 /** Required services: the slot system and the locale service. */
 export const inject = ['slots', 'locale']
 
-/** Client plugin body: register the drawer into shell.overlay. */
+/** Client plugin body. */
 export function apply(rawCtx: Context): void {
   const ctx = rawCtx as ThalamusClientContext
   ctx.effect(() => ctx.locale.register(NS as never, { zh, en }) as never, 'dsh-thalamus: dictionaries')
   const t = ctx.locale.bind(NS)
 
+  // Right-hand notification panel host (renders only while open).
   ctx.slots.inject('shell.overlay', () => ctx.slots.register(
     {
       name: 'shell.overlay',
-      id: 'thalamus-drawer',
+      id: 'thalamus-panel',
       order: 90,
       locale: NS as never,
     },
-    () => h(ThalamusHost, { injected: { t } }),
+    () => h(ThalamusPanel, { injected: { t } }),
   ))
+
+  // Sidebar footer bell: entry + unread badge + toggle.
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
+    {
+      name: 'sidebar.footer.action',
+      id: 'thalamus-bell',
+      order: 90,
+      locale: NS as never,
+      label: () => t('thalamus.bell'),
+    },
+    (props: { wide: boolean }) => h(BellWithUnread, { wide: props.wide, t }),
+  ))
+}
+
+/** The bell wired to the shared open/unread state. */
+function BellWithUnread({
+  wide,
+  t,
+}: {
+  wide: boolean
+  t: (key: string, params?: Record<string, unknown>) => string
+}): ReturnType<typeof h> {
+  const unread = useBellUnread()
+  // Re-render when the panel open state changes so the button stays live.
+  const [, forceRender] = useState(0)
+  useEffect(() => {
+    return subscribePanel(() => { forceRender(value => value + 1) })
+  }, [])
+  const injected: BellInjected = {
+    togglePanel: () => { setPanelOpen(!isPanelOpen()) },
+    unread,
+    t,
+  }
+  return h(BellButton, { wide, injected })
 }

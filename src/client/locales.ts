@@ -7,6 +7,8 @@ export const NS = 'dsh-thalamus'
 
 /** Simplified-Chinese dictionary. */
 export const zh = {
+  'thalamus.bell': '通知',
+  'thalamus.close': '关闭',
   'thalamus.capsule': '通知',
   'thalamus.drawerTitle': '通知中心',
   'thalamus.tab.notifications': '通知',
@@ -28,6 +30,8 @@ export const zh = {
 
 /** English dictionary. */
 export const en = {
+  'thalamus.bell': 'Notifications',
+  'thalamus.close': 'Close',
   'thalamus.capsule': 'Notifications',
   'thalamus.drawerTitle': 'Notification Center',
   'thalamus.tab.notifications': 'Notifications',
