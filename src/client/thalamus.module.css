@@ -1,38 +1,83 @@
 /* dsh-thalamus notification center: sidebar bell + right-hand panel. */
 
-/* ---- Sidebar footer bell ---- */
+/* ---- Sidebar footer bell (mirrors the settings-trigger chrome) ---- */
+
+/* Wide: a full-width 42px rounded row, 16px glyph + label. */
 .bell {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
+  width: auto;
+  height: 42px;
+  margin: 0;
+  padding: 0 10px 0 8px;
+  box-sizing: border-box;
   border: none;
+  border-radius: 12px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary, #999);
   cursor: pointer;
-  border-radius: 8px;
-  font-size: 13px;
-  transition: color 120ms ease, background 120ms ease;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .bell:hover {
-  color: var(--dsw-alias-label-primary, currentColor);
-  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.08));
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.bellIcon {
+/* Rail: the same 36x36 circle box as the other rail controls. */
+.bell.bellRail {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.bellIconWide {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bellIconWide svg {
+  width: 16px;
+  height: 16px;
+}
+
+.bellIconRail {
   position: relative;
   display: inline-flex;
-  width: 24px;
+  align-items: center;
   justify-content: center;
-  flex: none;
 }
 
+.bellIconRail svg {
+  width: 18px;
+  height: 18px;
+}
+
+.bellLabel {
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+/* Badges: rail sits at the circle's top-right; wide follows the label. */
 .bellBadge {
   position: absolute;
   top: -3px;
-  right: -6px;
+  right: -7px;
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
@@ -45,10 +90,18 @@
   font-weight: 700;
 }
 
-.bellLabel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.bellBadgeWide {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-danger-primary, #e5484d);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
 }
 
 /* ---- Right-hand panel (shell.overlay) ---- */
