@@ -1,0 +1,6 @@
+# Bundle patch layer: the row loads the package's main entry as the host half
+# (a plain Cordis plugin that provides ctx.notifications); the client bundle
+# registers the notification/preview drawer into shell.overlay.
+- insert:
+    - id: dsh-thalamus
+      name: dsh-thalamus
