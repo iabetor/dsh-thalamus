@@ -1,14 +1,10 @@
 /**
  * ThalamusPanel: the right-hand notification column (方案 B).
  *
- * Hidden by default; the sidebar bell (sidebar.footer.action) toggles it via
- * the shared panel-state module. Fixed on the right edge, it overlays the
- * app rather than squeezing the conversation column (the harness details
- * slot is single-occupied by ui-chat, so a true layout column is not
- * available to plugins; a fixed overlay column keeps the same feel).
- *
- * Two tabs: Notifications (list, unread dots, clear) and Preview (full text
- * of a notification's attached artifact).
+ * The shell.overlay host (ThalamusPanel) stays mounted at all times: it owns
+ * the SSE channel and the notification list so a push updates the bell badge
+ * whether or not the panel is open. The panel body renders only while open;
+ * opening auto-marks visible notifications read, which clears the badge.
  */
 
 import { h, useCallback, useEffect, useMemo, useState } from './react.ts'
@@ -83,63 +79,22 @@ function PreviewBody({ text }: { text: string }): ReturnType<typeof h> {
   return h('pre', { className: css.previewBody }, text)
 }
 
-/** The right-hand panel content. */
-function PanelContent({ injected }: { injected: ThalamusInjected }): ReturnType<typeof h> {
-  const { t } = injected
+/** The panel body: notifications list + preview tabs. */
+function PanelContent({
+  notifications,
+  t,
+  onMarkRead,
+  onClear,
+  onClose,
+}: {
+  notifications: readonly ThalamusNotificationView[]
+  t: ThalamusInjected['t']
+  onMarkRead: (id: string) => void
+  onClear: () => void
+  onClose: () => void
+}): ReturnType<typeof h> {
   const [tab, setTab] = useState<'notifications' | 'preview'>('notifications')
-  const [notifications, setNotifications] = useState<ThalamusNotificationView[]>([])
   const [preview, setPreview] = useState<ThalamusNotificationView | null>(null)
-  const [loaded, setLoaded] = useState(false)
-
-  // Sync unread into the shared store for the bell badge.
-  const unreadCount = useMemo(
-    () => notifications.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
-    [notifications],
-  )
-  useEffect(() => { setUnread(unreadCount) }, [unreadCount])
-
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      const result = await fetchNotifications(100)
-      setNotifications(result.notifications)
-    } catch {
-      // Host may be down; keep the current list.
-    }
-  }, [])
-
-  // SSE: a pushed notification lands at the top.
-  useEffect(() => {
-    const unsubscribe = startNotificationEvents(notification => {
-      setNotifications(previous => [
-        notification,
-        ...previous.filter(item => item.id !== notification.id),
-      ])
-    })
-    return unsubscribe
-  }, [])
-
-  // Load once when the panel content mounts.
-  useEffect(() => {
-    if (!loaded) {
-      setLoaded(true)
-      void load()
-    }
-  }, [loaded, load])
-
-  // Auto-mark visible notifications read shortly after load (once).
-  useEffect(() => {
-    if (!loaded) return
-    const ids = notifications.filter(item => !item.read).map(item => item.id)
-    if (ids.length === 0) return
-    const timer = setTimeout(() => {
-      for (const id of ids) {
-        void markNotificationRead(id)
-        setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
-      }
-    }, 1200)
-    return () => { clearTimeout(timer) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded])
 
   const openPreview = (notification: ThalamusNotificationView): void => {
     setPreview(notification)
@@ -148,10 +103,6 @@ function PanelContent({ injected }: { injected: ThalamusInjected }): ReturnType<
   const backToNotifications = (): void => {
     setPreview(null)
     setTab('notifications')
-  }
-  const handleClear = (): void => {
-    if (!window.confirm(t('thalamus.clearConfirm'))) return
-    void clearNotifications().then(() => { setNotifications([]) })
   }
 
   return h('div', { className: css.panel },
@@ -172,11 +123,11 @@ function PanelContent({ injected }: { injected: ThalamusInjected }): ReturnType<
         : h('div', { className: css.panelTitle }, t('thalamus.drawerTitle')),
       h('div', { className: css.panelHeaderActions },
         tab === 'notifications' && notifications.length > 0
-          && h('button', { type: 'button', className: css.panelAction, onClick: handleClear }, t('thalamus.clear')),
+          && h('button', { type: 'button', className: css.panelAction, onClick: onClear }, t('thalamus.clear')),
         h('button', {
           type: 'button',
           className: css.panelClose,
-          onClick: () => { setPanelOpen(false) },
+          onClick: onClose,
           'aria-label': t('thalamus.close'),
         }, '×'),
       ),
@@ -191,10 +142,7 @@ function PanelContent({ injected }: { injected: ThalamusInjected }): ReturnType<
               notification,
               t,
               onOpenPreview: openPreview,
-              onRead: (id: string) => {
-                void markNotificationRead(id)
-                setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
-              },
+              onRead: onMarkRead,
             })),
           )
       ),
@@ -208,17 +156,83 @@ function PanelContent({ injected }: { injected: ThalamusInjected }): ReturnType<
   )
 }
 
-/** The shell.overlay host: renders the panel only when open. */
+/** The shell.overlay host: always mounted; owns SSE + list + open state. */
 export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): ReturnType<typeof h> | null {
+  const { t } = injected
   const [open, setOpen] = useState(isPanelOpen)
+  const [notifications, setNotifications] = useState<ThalamusNotificationView[]>([])
+  const [loaded, setLoaded] = useState(false)
 
+  // Follow the shared open flag.
   useEffect(() => {
     return subscribePanel(() => { setOpen(isPanelOpen()) })
   }, [])
 
-  if (!open) return null
+  // Sync unread into the shared store for the bell badge.
+  const unreadCount = useMemo(
+    () => notifications.reduce((sum, item) => sum + (item.read ? 0 : 1), 0),
+    [notifications],
+  )
+  useEffect(() => { setUnread(unreadCount) }, [unreadCount])
+
+  // SSE (always on): a pushed notification lands at the top, unread.
+  useEffect(() => {
+    const unsubscribe = startNotificationEvents(notification => {
+      setNotifications(previous => [
+        notification,
+        ...previous.filter(item => item.id !== notification.id),
+      ])
+    })
+    return unsubscribe
+  }, [])
+
+  // Load the persisted history once at startup.
+  useEffect(() => {
+    if (loaded) return
+    setLoaded(true)
+    void fetchNotifications(100).then(result => {
+      setNotifications(result.notifications)
+    }).catch(() => {
+      // Host may be down; keep the current list.
+    })
+  }, [loaded])
+
+  // Auto-read: when the panel is open, mark visible unread notifications
+  // read shortly after they appear (fires per unread batch via the key).
+  const unreadIds = useMemo(
+    () => notifications.filter(item => !item.read).map(item => item.id),
+    [notifications],
+  )
+  useEffect(() => {
+    if (!open || unreadIds.length === 0) return
+    const timer = setTimeout(() => {
+      for (const id of unreadIds) {
+        void markNotificationRead(id)
+        setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
+      }
+    }, 800)
+    return () => { clearTimeout(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, unreadIds.join('|')])
+
+  const markRead = useCallback((id: string): void => {
+    void markNotificationRead(id)
+    setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
+  }, [])
+
+  const handleClear = (): void => {
+    if (!window.confirm(t('thalamus.clearConfirm'))) return
+    void clearNotifications().then(() => { setNotifications([]) })
+  }
+
   return h('div', { className: css.panelOverlay },
-    h(PanelContent, { injected }),
+    open && h(PanelContent, {
+      notifications,
+      t,
+      onMarkRead: markRead,
+      onClear: handleClear,
+      onClose: () => { setPanelOpen(false) },
+    }),
   )
 }
 
