@@ -36,9 +36,6 @@ export interface QuestionRequestLike {
   }
 }
 
-/** debounce 窗口：同一会话在此窗口内的提问合并为一条通知。 */
-export const QUESTION_DEBOUNCE_MS = 10_000
-
 /** 单条通知里问题摘要的截断长度。 */
 const SUMMARY_LIMIT = 120
 
@@ -93,78 +90,44 @@ function formatQuestions(questions: readonly QuestionItemLike[]): string {
   return lines.join('\n')
 }
 
-/** 一个会话的待推送状态（debounce 计数 + 定时器）。 */
-interface PendingAlert {
-  count: number
-  questions: QuestionItemLike[]
-  timer: ReturnType<typeof setTimeout>
-}
-
 /**
- * 注册提问提醒：监听 `user-questions/request` 并推送通知。
+ * 注册提问提醒：监听 `user-questions/request` 并即时广播通知。
+ *
+ * 每次提问立即广播一条（无 debounce）：同一会话不可能并发提问——工具
+ * `ask_user_question` 的 execute 会 await 用户回答，agent 回合卡在那里，
+ * 用户答完才会继续。一次调用的多个问题本来就在同一条通知里（见
+ * {@link formatQuestions}）。多会话可同时提问，各自一条通知。
  *
  * 监听器**始终** `return next()`——这是不破坏问答链路的硬约束。
  * @param ctx - 插件上下文（用于 ctx.on 注册，随 fiber 自动清理）。
  * @param service - 通知服务（广播失败不影响问答）。
- * @returns 清理函数（清空未触发的 debounce 定时器）。
  */
 export function registerQuestionAlert(
   ctx: Context,
   service: Pick<ThalamusService, 'broadcastOnly'>,
-): () => void {
-  const pending = new Map<string, PendingAlert>()
-
-  const flush = (key: string): void => {
-    const entry = pending.get(key)
-    if (entry === undefined) return
-    pending.delete(key)
-    const label = sessionLabel(key === 'unknown' ? undefined : key)
-    const count = entry.count
-    const questions = entry.questions
-    try {
-      // broadcastOnly（非 push）：提问提醒只做实时提醒，不进通知中心列表、
-      // 不占未读角标、不落盘——用户回到页面看会话树的 pending 指示即可。
-      service.broadcastOnly({
-        source: 'question',
-        kind: 'info',
-        title: label === undefined ? '有提问待回答' : `有提问待回答 · ${label}`,
-        detail: summarize(questions, count),
-        preview: {
-          name: 'question.md',
-          text: formatQuestions(questions),
-          language: 'md',
-        },
-        // 会话标识随通知下发，供浏览器端点击跳转。
-        ...(key === 'unknown' ? {} : { sessionId: key }),
-      })
-    } catch {
-      // 提醒是尽力而为：广播失败绝不冒泡到问答链路。
-    }
-  }
-
+): void {
   // 瀑布事件监听器：副作用先行、始终委托 next()。
   const onRequest = (request: QuestionRequestLike, next: () => unknown): unknown => {
     try {
       const questions = Array.isArray(request?.questions) ? request.questions : []
       if (questions.length > 0) {
-        const key = sessionIdOf(request) ?? 'unknown'
-        const existing = pending.get(key)
-        if (existing === undefined) {
-          const timer = setTimeout(() => { flush(key) }, QUESTION_DEBOUNCE_MS)
-          // Node 定时器不应阻止进程退出。
-          if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
-            (timer as { unref(): void }).unref()
-          }
-          pending.set(key, { count: questions.length, questions: [...questions], timer })
-        } else {
-          clearTimeout(existing.timer)
-          existing.count += questions.length
-          existing.questions.push(...questions)
-          existing.timer = setTimeout(() => { flush(key) }, QUESTION_DEBOUNCE_MS)
-          if (typeof existing.timer === 'object' && existing.timer !== null && 'unref' in existing.timer) {
-            (existing.timer as { unref(): void }).unref()
-          }
-        }
+        const sessionId = sessionIdOf(request)
+        const label = sessionLabel(sessionId)
+        // broadcastOnly（非 push）：提问提醒只做实时提醒，不进通知中心列表、
+        // 不占未读角标、不落盘——用户回到页面看会话树的 pending 指示即可。
+        service.broadcastOnly({
+          source: 'question',
+          kind: 'info',
+          title: label === undefined ? '有提问待回答' : `有提问待回答 · ${label}`,
+          detail: summarize(questions, questions.length),
+          preview: {
+            name: 'question.md',
+            text: formatQuestions(questions),
+            language: 'md',
+          },
+          // 会话标识随通知下发，供浏览器端点击跳转。
+          ...(sessionId === undefined ? {} : { sessionId }),
+        })
       }
     } catch {
       // 提醒逻辑的任何故障都不能影响问答。
@@ -174,9 +137,4 @@ export function registerQuestionAlert(
   }
 
   ctx.on('user-questions/request' as never, onRequest as never)
-
-  return () => {
-    for (const entry of pending.values()) clearTimeout(entry.timer)
-    pending.clear()
-  }
 }
