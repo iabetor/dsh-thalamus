@@ -15,6 +15,8 @@ export interface ThalamusNotificationView {
     text: string
     language?: string
   }
+  /** Session this notification belongs to (question alerts use it to jump). */
+  sessionId?: string
   time: number
   read: boolean
 }

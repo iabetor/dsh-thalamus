@@ -26,6 +26,8 @@ export const zh = {
   'thalamus.justNow': '刚刚',
   'thalamus.minutesAgo': '{count} 分钟前',
   'thalamus.hoursAgo': '{count} 小时前',
+  'thalamus.enableNotify': '启用系统通知',
+  'thalamus.notifyHint': '离开页面时，提问会以系统通知提醒你',
 } satisfies Record<string, string>
 
 /** English dictionary. */
@@ -49,4 +51,6 @@ export const en = {
   'thalamus.justNow': 'just now',
   'thalamus.minutesAgo': '{count} min ago',
   'thalamus.hoursAgo': '{count} hr ago',
+  'thalamus.enableNotify': 'Enable system notifications',
+  'thalamus.notifyHint': 'Get a system notification when a question arrives while you are away',
 } satisfies Record<string, string>

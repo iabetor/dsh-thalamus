@@ -21,6 +21,7 @@ import {
   appendNotification, readNotifications, storageRoot, writeNotifications,
 } from './store.ts'
 import { registerThalamusApi } from './api.ts'
+import { registerQuestionAlert } from './question-alert.ts'
 
 /** One notification pushed by a consumer plugin. */
 export interface ThalamusNotification {
@@ -43,6 +44,11 @@ export interface ThalamusNotification {
     /** Hint for syntax highlighting (md/ts/json/...). */
     readonly language?: string
   }
+  /**
+   * Optional session this notification belongs to (e.g. the asking session for
+   * a question alert). The browser uses it to jump to that session on click.
+   */
+  readonly sessionId?: string
   /** Unix epoch ms at push. */
   readonly time: number
   /** Whether the user has seen it. */
@@ -163,6 +169,11 @@ export function apply(ctx: Context, config: ThalamusConfig = {}): void {
   service.onPush(notification => {
     broadcast({ type: 'notification', notification })
   })
+
+  // 提问提醒：旁路监听 user-questions/request 瀑布事件，agent 提问时推一条
+  // 通知（浏览器端在页面不可见时转成系统通知）。监听器始终 return next()，
+  // 不影响 web/cortex 的既有应答链路。
+  ctx.effect(() => registerQuestionAlert(ctx, service), 'dsh-thalamus: question alert')
 
   // Web surface (web profiles): register /thalamus/api + /thalamus/events
   // once the webserver + webRuntime arrive. Headless runs skip this.

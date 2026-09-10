@@ -26,7 +26,9 @@ export interface ThalamusClientContext extends Context {
   }
 }
 
-/** Required services: the slot system and the locale service. */
+/** Required services: the slot system and the locale service. Session
+ * navigation is optional (see the conditional inject below) so the
+ * notification center still mounts in profiles without `sessions`. */
 export const inject = ['slots', 'locale']
 
 /** Client plugin body. */
@@ -36,6 +38,9 @@ export function apply(rawCtx: Context): void {
   const t = ctx.locale.bind(NS)
 
   // Right-hand notification panel host (renders only while open).
+  // `sessions` is resolved lazily (ctx.get) rather than injected: jump-to-session
+  // is a convenience, and a profile without the service must still get the
+  // notification center itself.
   ctx.slots.inject('shell.overlay', () => ctx.slots.register(
     {
       name: 'shell.overlay',
@@ -43,7 +48,17 @@ export function apply(rawCtx: Context): void {
       order: 90,
       locale: NS as never,
     },
-    () => h(ThalamusPanel, { injected: { t } }),
+    () => h(ThalamusPanel, {
+      injected: {
+        t,
+        openSession: (sessionId: string) => {
+          const sessions = (ctx as unknown as {
+            get?(name: string): unknown
+          }).get?.('sessions') as { open(id: string): void } | undefined
+          sessions?.open(sessionId)
+        },
+      },
+    }),
   ))
 
   // Sidebar footer bell: entry + unread badge + toggle.

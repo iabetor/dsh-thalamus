@@ -7,12 +7,16 @@
  * opening auto-marks visible notifications read, which clears the badge.
  */
 
-import { h, useCallback, useEffect, useMemo, useState } from './react.ts'
+import { h, useCallback, useEffect, useMemo, useRef, useState } from './react.ts'
 import {
   clearNotifications, fetchNotifications, markNotificationRead,
   startNotificationEvents, type ThalamusNotificationView,
 } from './api.ts'
 import { getUnread, isPanelOpen, setPanelOpen, setUnread, subscribePanel } from './panel-state.ts'
+import {
+  bumpTitlePrefix, clearTitlePrefix, notifyPermission, pageHidden,
+  requestNotifyPermission, showSystemNotification, type NotifyPermission,
+} from './desktop-notify.ts'
 import css from './thalamus.module.css'
 
 // Minimal DOM face (the host tsconfig has no DOM lib; the browser bundle
@@ -22,6 +26,8 @@ declare const window: { confirm(message: string): boolean }
 /** Injected services the panel needs. */
 export interface ThalamusInjected {
   t: (key: string, params?: Record<string, unknown>) => string
+  /** Jump to one session (question alerts). Optional: absent in reduced profiles. */
+  openSession?: (sessionId: string) => void
 }
 
 /** Relative time label. */
@@ -86,12 +92,17 @@ function PanelContent({
   onMarkRead,
   onClear,
   onClose,
+  permission,
+  enableNotifications,
 }: {
   notifications: readonly ThalamusNotificationView[]
   t: ThalamusInjected['t']
   onMarkRead: (id: string) => void
   onClear: () => void
   onClose: () => void
+  /** Current system-notification permission (button shows only when 'default'). */
+  permission: NotifyPermission
+  enableNotifications: () => Promise<void>
 }): ReturnType<typeof h> {
   const [tab, setTab] = useState<'notifications' | 'preview'>('notifications')
   const [preview, setPreview] = useState<ThalamusNotificationView | null>(null)
@@ -122,6 +133,13 @@ function PanelContent({
         )
         : h('div', { className: css.panelTitle }, t('thalamus.drawerTitle')),
       h('div', { className: css.panelHeaderActions },
+        tab === 'notifications' && permission === 'default'
+          && h('button', {
+            type: 'button',
+            className: css.panelAction,
+            title: t('thalamus.notifyHint'),
+            onClick: () => { void enableNotifications() },
+          }, t('thalamus.enableNotify')),
         tab === 'notifications' && notifications.length > 0
           && h('button', { type: 'button', className: css.panelAction, onClick: onClear }, t('thalamus.clear')),
         h('button', {
@@ -162,6 +180,10 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
   const [open, setOpen] = useState(isPanelOpen)
   const [notifications, setNotifications] = useState<ThalamusNotificationView[]>([])
   const [loaded, setLoaded] = useState(false)
+  // 最新列表的镜像：SSE 回调闭包不随 state 更新，用它读当前未读提问数。
+  // injected 每次渲染都是新对象；用 ref 让 SSE 回调读到最新值而不重连。
+  const injectedRef = useRef(injected)
+  injectedRef.current = injected
 
   // Follow the shared open flag.
   useEffect(() => {
@@ -175,15 +197,51 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
   )
   useEffect(() => { setUnread(unreadCount) }, [unreadCount])
 
+  // 未读提问数 → 标签标题前缀（用户离开页面时提示有提问待回答）。
+  const unreadQuestions = useMemo(
+    () => notifications.filter(item => item.source === 'question' && !item.read).length,
+    [notifications],
+  )
+  useEffect(() => {
+    if (unreadQuestions > 0) bumpTitlePrefix(unreadQuestions)
+    else clearTitlePrefix()
+  }, [unreadQuestions])
+
   // SSE (always on): a pushed notification lands at the top, unread.
+  // 提问提醒（source: 'question'）在页面不可见/失焦时额外发系统通知；
+  // 页面可见时只走页内列表，不打扰正在看的用户。
   useEffect(() => {
     const unsubscribe = startNotificationEvents(notification => {
       setNotifications(previous => [
         notification,
         ...previous.filter(item => item.id !== notification.id),
       ])
+      if (notification.source !== 'question') return
+      if (!pageHidden()) return
+      const openSession = injectedRef.current.openSession
+      showSystemNotification(
+        notification.title,
+        notification.detail ?? '',
+        {
+          tag: notification.sessionId ?? notification.id,
+          ...(notification.sessionId === undefined || openSession === undefined
+            ? {}
+            : { onClick: () => { openSession(notification.sessionId as string) } }),
+        },
+      )
     })
     return unsubscribe
+  }, [])
+
+  // 用户回到页面（可见 + 聚焦）时清除标题前缀。
+  useEffect(() => {
+    const doc = (globalThis as {
+      document?: { addEventListener?: (type: string, fn: () => void) => void; removeEventListener?: (type: string, fn: () => void) => void }
+    }).document
+    if (doc?.addEventListener === undefined) return
+    const onVisible = (): void => { if (!pageHidden()) clearTitlePrefix() }
+    doc.addEventListener('visibilitychange', onVisible)
+    return () => { doc.removeEventListener?.('visibilitychange', onVisible) }
   }, [])
 
   // Load the persisted history once at startup.
@@ -225,6 +283,12 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
     void clearNotifications().then(() => { setNotifications([]) })
   }
 
+  // 系统通知权限：仅能由用户手势请求，所以做成按钮（见 PanelContent 头部）。
+  const [permission, setPermission] = useState<NotifyPermission>(notifyPermission)
+  const enableNotifications = async (): Promise<void> => {
+    setPermission(await requestNotifyPermission())
+  }
+
   return h('div', { className: css.panelOverlay },
     open && h(PanelContent, {
       notifications,
@@ -232,6 +296,8 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
       onMarkRead: markRead,
       onClear: handleClear,
       onClose: () => { setPanelOpen(false) },
+      permission,
+      enableNotifications,
     }),
   )
 }
