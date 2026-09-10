@@ -232,19 +232,29 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
     return unsubscribe
   }, [])
 
-  // 用户回到页面（可见 + 聚焦）时清除标题前缀并归零提问计数。
+  // 用户回到页面时清除标题前缀并归零提问计数。
+  // 两种"回来"都要覆盖：切回本标签页触发 visibilitychange；从别的应用切回
+  // 本窗口只触发 window focus（此时 visibilityState 全程是 visible）。
   useEffect(() => {
-    const doc = (globalThis as {
-      document?: { addEventListener?: (type: string, fn: () => void) => void; removeEventListener?: (type: string, fn: () => void) => void }
-    }).document
-    if (doc?.addEventListener === undefined) return
-    const onVisible = (): void => {
+    const g = globalThis as {
+      document?: {
+        addEventListener?: (type: string, fn: () => void) => void
+        removeEventListener?: (type: string, fn: () => void) => void
+      }
+      addEventListener?: (type: string, fn: () => void) => void
+      removeEventListener?: (type: string, fn: () => void) => void
+    }
+    const onReturn = (): void => {
       if (pageHidden()) return
       clearTitlePrefix()
       pendingQuestionsRef.current = 0
     }
-    doc.addEventListener('visibilitychange', onVisible)
-    return () => { doc.removeEventListener?.('visibilitychange', onVisible) }
+    g.document?.addEventListener?.('visibilitychange', onReturn)
+    g.addEventListener?.('focus', onReturn)
+    return () => {
+      g.document?.removeEventListener?.('visibilitychange', onReturn)
+      g.removeEventListener?.('focus', onReturn)
+    }
   }, [])
 
   // Load the persisted history once at startup.
