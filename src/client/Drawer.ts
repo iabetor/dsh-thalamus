@@ -203,14 +203,14 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
   // SSE (always on).
   // - 普通通知（记忆整理等）：入库并置顶显示、计入角标。
   // - 提问提醒（source: 'question'）：host 走 broadcastOnly —— 不入库、
-  //   不进列表、不占角标（用户回到页面看会话树的 pending 指示即可），
-  //   这里只做两件事：标签标题前缀 + 页面隐藏时的系统通知。
+  //   不进列表、不占角标。仅当页面**不可见/失焦**时才提醒（标题前缀 +
+  //   系统通知）；用户就在页面上时什么都不做（会话树的 pending 黄点足够）。
   useEffect(() => {
     const unsubscribe = startNotificationEvents(notification => {
       if (notification.source === 'question') {
+        if (!pageHidden()) return
         pendingQuestionsRef.current += 1
         bumpTitlePrefix(pendingQuestionsRef.current)
-        if (!pageHidden()) return
         const openSession = injectedRef.current.openSession
         showSystemNotification(
           notification.title,
