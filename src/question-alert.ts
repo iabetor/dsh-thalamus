@@ -105,12 +105,12 @@ interface PendingAlert {
  *
  * 监听器**始终** `return next()`——这是不破坏问答链路的硬约束。
  * @param ctx - 插件上下文（用于 ctx.on 注册，随 fiber 自动清理）。
- * @param service - 通知服务（push 失败不影响问答）。
+ * @param service - 通知服务（广播失败不影响问答）。
  * @returns 清理函数（清空未触发的 debounce 定时器）。
  */
 export function registerQuestionAlert(
   ctx: Context,
-  service: Pick<ThalamusService, 'push'>,
+  service: Pick<ThalamusService, 'broadcastOnly'>,
 ): () => void {
   const pending = new Map<string, PendingAlert>()
 
@@ -121,21 +121,25 @@ export function registerQuestionAlert(
     const label = sessionLabel(key === 'unknown' ? undefined : key)
     const count = entry.count
     const questions = entry.questions
-    void service.push({
-      source: 'question',
-      kind: 'info',
-      title: label === undefined ? '有提问待回答' : `有提问待回答 · ${label}`,
-      detail: summarize(questions, count),
-      preview: {
-        name: 'question.md',
-        text: formatQuestions(questions),
-        language: 'md',
-      },
-      // 会话标识随通知下发，供浏览器端点击跳转。
-      ...(key === 'unknown' ? {} : { sessionId: key }),
-    } as never).catch(() => {
-      // 提醒是尽力而为：推送失败绝不冒泡到问答链路。
-    })
+    try {
+      // broadcastOnly（非 push）：提问提醒只做实时提醒，不进通知中心列表、
+      // 不占未读角标、不落盘——用户回到页面看会话树的 pending 指示即可。
+      service.broadcastOnly({
+        source: 'question',
+        kind: 'info',
+        title: label === undefined ? '有提问待回答' : `有提问待回答 · ${label}`,
+        detail: summarize(questions, count),
+        preview: {
+          name: 'question.md',
+          text: formatQuestions(questions),
+          language: 'md',
+        },
+        // 会话标识随通知下发，供浏览器端点击跳转。
+        ...(key === 'unknown' ? {} : { sessionId: key }),
+      })
+    } catch {
+      // 提醒是尽力而为：广播失败绝不冒泡到问答链路。
+    }
   }
 
   // 瀑布事件监听器：副作用先行、始终委托 next()。

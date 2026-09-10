@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ThalamusService } from '../src/index.ts'
+import { ThalamusService, type ThalamusNotification } from '../src/index.ts'
 import { QUESTION_DEBOUNCE_MS, registerQuestionAlert } from '../src/question-alert.ts'
 
 const roots: string[] = []
@@ -13,12 +13,19 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-async function makeService(): Promise<{ ctx: Context; service: ThalamusService }> {
+/** A service plus a recorder of every broadcast notification. */
+async function makeService(): Promise<{
+  ctx: Context
+  service: ThalamusService
+  seen: ThalamusNotification[]
+}> {
   const root = await mkdtemp(join(tmpdir(), 'thalamus-q-'))
   roots.push(root)
   const ctx = new Context()
   const service = new ThalamusService(ctx, { memoryRoot: root })
-  return { ctx, service }
+  const seen: ThalamusNotification[] = []
+  service.onPush(notification => { seen.push(notification) })
+  return { ctx, service, seen }
 }
 
 /** One question request payload with a session identity. */
@@ -43,22 +50,35 @@ function dispatchQuestion(ctx: Context, payload: unknown, next: () => unknown): 
 }
 
 describe('registerQuestionAlert', () => {
-  it('pushes one notification per session after the debounce window', async () => {
+  it('broadcasts one alert per session after the debounce window', async () => {
     vi.useFakeTimers()
-    const { ctx, service } = await makeService()
+    const { ctx, service, seen } = await makeService()
     const dispose = registerQuestionAlert(ctx, service)
 
-    // Simulate the waterfall dispatch: listener receives (request, next).
     const next = vi.fn(() => Promise.resolve({ answers: [] }))
     dispatchQuestion(ctx, request('session-aaaaaaaa'), next)
-    expect(await service.list()).toHaveLength(0) // not yet — debounce pending
+    expect(seen).toHaveLength(0) // not yet — debounce pending
 
     await vi.advanceTimersByTimeAsync(QUESTION_DEBOUNCE_MS + 10)
-    const list = await service.list()
-    expect(list).toHaveLength(1)
-    expect(list[0]?.source).toBe('question')
-    expect(list[0]?.sessionId).toBe('session-aaaaaaaa')
-    expect(list[0]?.detail).toContain('继续吗')
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.source).toBe('question')
+    expect(seen[0]?.sessionId).toBe('session-aaaaaaaa')
+    expect(seen[0]?.detail).toContain('继续吗')
+    dispose()
+  })
+
+  it('never stores the alert — the notification center stays clean', async () => {
+    vi.useFakeTimers()
+    const { ctx, service, seen } = await makeService()
+    const dispose = registerQuestionAlert(ctx, service)
+
+    dispatchQuestion(ctx, request('session-aaaaaaaa'), () => Promise.resolve({ answers: [] }))
+    await vi.advanceTimersByTimeAsync(QUESTION_DEBOUNCE_MS + 10)
+
+    // The broadcast reached live clients…
+    expect(seen).toHaveLength(1)
+    // …but nothing was persisted or listed (no badge, no history entry).
+    expect(await service.list()).toHaveLength(0)
     dispose()
   })
 
@@ -75,9 +95,9 @@ describe('registerQuestionAlert', () => {
     dispose()
   })
 
-  it('merges repeated questions of one session into a single notification', async () => {
+  it('merges repeated questions of one session into a single alert', async () => {
     vi.useFakeTimers()
-    const { ctx, service } = await makeService()
+    const { ctx, service, seen } = await makeService()
     const dispose = registerQuestionAlert(ctx, service)
     const next = () => Promise.resolve({ answers: [] })
 
@@ -86,16 +106,14 @@ describe('registerQuestionAlert', () => {
     dispatchQuestion(ctx, request('session-cccccccc', [{ question: '第二个问题？' }]), next)
     await vi.advanceTimersByTimeAsync(QUESTION_DEBOUNCE_MS + 10)
 
-    const list = await service.list()
-    expect(list).toHaveLength(1)
-    // Two questions counted in the merged alert.
-    expect(list[0]?.detail).toContain('共 2 个问题')
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.detail).toContain('共 2 个问题')
     dispose()
   })
 
-  it('keeps different sessions on separate notifications', async () => {
+  it('keeps different sessions on separate alerts', async () => {
     vi.useFakeTimers()
-    const { ctx, service } = await makeService()
+    const { ctx, service, seen } = await makeService()
     const dispose = registerQuestionAlert(ctx, service)
     const next = () => Promise.resolve({ answers: [] })
 
@@ -103,22 +121,21 @@ describe('registerQuestionAlert', () => {
     dispatchQuestion(ctx, request('session-eeeeeeee'), next)
     await vi.advanceTimersByTimeAsync(QUESTION_DEBOUNCE_MS + 10)
 
-    expect(await service.list()).toHaveLength(2)
+    expect(seen).toHaveLength(2)
     dispose()
   })
 
   it('tolerates a request with no session identity', async () => {
     vi.useFakeTimers()
-    const { ctx, service } = await makeService()
+    const { ctx, service, seen } = await makeService()
     const dispose = registerQuestionAlert(ctx, service)
     const next = () => Promise.resolve({ answers: [] })
 
     dispatchQuestion(ctx, { questions: [{ question: '无会话？' }] }, next)
     await vi.advanceTimersByTimeAsync(QUESTION_DEBOUNCE_MS + 10)
 
-    const list = await service.list()
-    expect(list).toHaveLength(1)
-    expect(list[0]?.sessionId).toBeUndefined()
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.sessionId).toBeUndefined()
     dispose()
   })
 })

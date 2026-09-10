@@ -184,6 +184,9 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
   // injected 每次渲染都是新对象；用 ref 让 SSE 回调读到最新值而不重连。
   const injectedRef = useRef(injected)
   injectedRef.current = injected
+  // 提问提醒是 ephemeral（不入库、不在 notifications 列表里），前缀计数
+  // 只能自己维护；用户回到页面时归零。
+  const pendingQuestionsRef = useRef(0)
 
   // Follow the shared open flag.
   useEffect(() => {
@@ -197,49 +200,49 @@ export function ThalamusPanel({ injected }: { injected: ThalamusInjected }): Ret
   )
   useEffect(() => { setUnread(unreadCount) }, [unreadCount])
 
-  // 未读提问数 → 标签标题前缀（用户离开页面时提示有提问待回答）。
-  const unreadQuestions = useMemo(
-    () => notifications.filter(item => item.source === 'question' && !item.read).length,
-    [notifications],
-  )
-  useEffect(() => {
-    if (unreadQuestions > 0) bumpTitlePrefix(unreadQuestions)
-    else clearTitlePrefix()
-  }, [unreadQuestions])
-
-  // SSE (always on): a pushed notification lands at the top, unread.
-  // 提问提醒（source: 'question'）在页面不可见/失焦时额外发系统通知；
-  // 页面可见时只走页内列表，不打扰正在看的用户。
+  // SSE (always on).
+  // - 普通通知（记忆整理等）：入库并置顶显示、计入角标。
+  // - 提问提醒（source: 'question'）：host 走 broadcastOnly —— 不入库、
+  //   不进列表、不占角标（用户回到页面看会话树的 pending 指示即可），
+  //   这里只做两件事：标签标题前缀 + 页面隐藏时的系统通知。
   useEffect(() => {
     const unsubscribe = startNotificationEvents(notification => {
+      if (notification.source === 'question') {
+        pendingQuestionsRef.current += 1
+        bumpTitlePrefix(pendingQuestionsRef.current)
+        if (!pageHidden()) return
+        const openSession = injectedRef.current.openSession
+        showSystemNotification(
+          notification.title,
+          notification.detail ?? '',
+          {
+            tag: notification.sessionId ?? notification.id,
+            ...(notification.sessionId === undefined || openSession === undefined
+              ? {}
+              : { onClick: () => { openSession(notification.sessionId as string) } }),
+          },
+        )
+        return
+      }
       setNotifications(previous => [
         notification,
         ...previous.filter(item => item.id !== notification.id),
       ])
-      if (notification.source !== 'question') return
-      if (!pageHidden()) return
-      const openSession = injectedRef.current.openSession
-      showSystemNotification(
-        notification.title,
-        notification.detail ?? '',
-        {
-          tag: notification.sessionId ?? notification.id,
-          ...(notification.sessionId === undefined || openSession === undefined
-            ? {}
-            : { onClick: () => { openSession(notification.sessionId as string) } }),
-        },
-      )
     })
     return unsubscribe
   }, [])
 
-  // 用户回到页面（可见 + 聚焦）时清除标题前缀。
+  // 用户回到页面（可见 + 聚焦）时清除标题前缀并归零提问计数。
   useEffect(() => {
     const doc = (globalThis as {
       document?: { addEventListener?: (type: string, fn: () => void) => void; removeEventListener?: (type: string, fn: () => void) => void }
     }).document
     if (doc?.addEventListener === undefined) return
-    const onVisible = (): void => { if (!pageHidden()) clearTitlePrefix() }
+    const onVisible = (): void => {
+      if (pageHidden()) return
+      clearTitlePrefix()
+      pendingQuestionsRef.current = 0
+    }
     doc.addEventListener('visibilitychange', onVisible)
     return () => { doc.removeEventListener?.('visibilitychange', onVisible) }
   }, [])

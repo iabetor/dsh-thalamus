@@ -115,6 +115,26 @@ export class ThalamusService extends Service {
     })
   }
 
+  /**
+   * Broadcast one ephemeral notification WITHOUT storing it: live clients see
+   * it (toast / system notification) but it never enters the list, the unread
+   * badge, or the persisted history. Used by transient alerts the user does
+   * not need to revisit — e.g. a question alert, where the sidebar's own
+   * pending indicator is the durable signal.
+   */
+  broadcastOnly(input: ThalamusNotificationInput): ThalamusNotification {
+    const notification: ThalamusNotification = {
+      id: randomUUID(),
+      ...input,
+      time: Date.now(),
+      read: false,
+    }
+    for (const listener of this.listeners) {
+      try { listener(notification) } catch { /* listener fault */ }
+    }
+    return notification
+  }
+
   /** Read notifications, newest first. */
   list(limit = 100): Promise<ThalamusNotification[]> {
     return this.serialize(async () => {
