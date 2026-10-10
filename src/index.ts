@@ -197,18 +197,18 @@ export function apply(ctx: Context, config: ThalamusConfig = {}): void {
   registerQuestionAlert(ctx, service)
 
   // Web surface (web profiles): register /thalamus/api + /thalamus/events
-  // once the webserver + webRuntime arrive. Headless runs skip this.
+  // once the webserver + webStartup arrive. Headless runs skip this.
   const webCtx = ctx as unknown as {
     inject?(services: string[], callback: (apiCtx: never) => void): void
   }
-  webCtx.inject?.(['webServer', 'webRuntime'], (apiCtx) => {
+  webCtx.inject?.(['webServer', 'webStartup'], (apiCtx) => {
     const host = apiCtx as unknown as {
       webServer: { register(route: WebRoute): () => void }
-      webRuntime: { trustedHosts: string[] }
+      webStartup: { trustedHosts: string[] }
     }
     registerThalamusApi({
       webServer: host.webServer,
-      webRuntime: host.webRuntime,
+      webStartup: host.webStartup,
       notifications: service,
     } as never, {
       add: (client: ServerResponse) => {

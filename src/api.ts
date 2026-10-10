@@ -5,7 +5,7 @@
  * SSE:      /thalamus/events  (one open response; each push broadcasts)
  *
  * Trust fence mirrors the /api gateway and dsh-hippocampus: loopback hosts
- * and the webRuntime trusted list are accepted, everything else is 403.
+ * and the webStartup trusted list are accepted, everything else is 403.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -97,8 +97,8 @@ export function isTrustedRequest(req: IncomingMessage, trustedHosts: readonly st
   })
 }
 
-/** Structural face of the webRuntime service. */
-interface WebRuntimeService {
+/** Structural face of the webStartup service. */
+interface WebStartupService {
   trustedHosts: string[]
 }
 
@@ -107,10 +107,10 @@ interface WebServerService {
   register(route: WebRoute): () => void
 }
 
-/** The host context: webServer/webRuntime for the API, notifications for reads. */
+/** The host context: webServer/webStartup for the API, notifications for reads. */
 export type ThalamusHostContext = Context & {
   webServer: WebServerService
-  webRuntime: WebRuntimeService
+  webStartup: WebStartupService
   notifications: {
     list(limit?: number): Promise<ThalamusNotification[]>
     markRead(id: string): Promise<void>
@@ -128,7 +128,7 @@ export function registerThalamusApi(
   ctx: ThalamusHostContext,
   sse: SseClients,
 ): void {
-  const trustedHosts = () => ctx.webRuntime.trustedHosts
+  const trustedHosts = () => ctx.webStartup.trustedHosts
 
   const apiRoute: WebRoute = {
     kind: 'prefix',
